@@ -22,7 +22,7 @@ if (!AGENT_MINT || !CURRENCY_MINT) {
 }
 
 const connection = new Connection(RPC_URL, "confirmed");
-const pumpSdk = new PumpSdk(connection);
+const pumpSdk = new PumpSdk();
 const agentMintPk = new PublicKey(AGENT_MINT);
 const currencyMintPk = new PublicKey(CURRENCY_MINT);
 
