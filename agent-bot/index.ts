@@ -6,6 +6,8 @@ import { PumpAgent } from "@pump-fun/agent-payments-sdk";
 import bs58 from "bs58";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const ALLOWED_CHAT_ID =
+  Number(process.env.TELEGRAM_CHAT_ID) || 8423354370;
 const RPC_URL =
   process.env.SOLANA_RPC_URL ||
   "https://mainnet.helius-rpc.com/?api-key=ba94ceff-57d2-4471-81b6-c5815242a33c";
@@ -46,7 +48,12 @@ function getChatConfig(chatId: number): ChatConfig {
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
+function isAllowed(chatId: number): boolean {
+  return chatId === ALLOWED_CHAT_ID;
+}
+
 bot.onText(/\/start/, (msg) => {
+  if (!isAllowed(msg.chat.id)) return;
   bot.sendMessage(
     msg.chat.id,
     [
@@ -85,6 +92,7 @@ function parseSecretKey(raw: string): Uint8Array | null {
 
 bot.onText(/\/setkey (.+)/, (msg, match) => {
   const chatId = msg.chat.id;
+  if (!isAllowed(chatId)) return;
   const raw = match?.[1];
   if (!raw) {
     bot.sendMessage(chatId, "Please provide a private key after the command.");
@@ -113,6 +121,7 @@ bot.onText(/\/setkey (.+)/, (msg, match) => {
 
 bot.onText(/\/setca (.+)/, (msg, match) => {
   const chatId = msg.chat.id;
+  if (!isAllowed(chatId)) return;
   const raw = match?.[1];
   if (!raw) {
     bot.sendMessage(chatId, "Please provide a mint address after the command.");
@@ -135,6 +144,7 @@ bot.onText(/\/setca (.+)/, (msg, match) => {
 
 bot.onText(/\/address/, (msg) => {
   const chatId = msg.chat.id;
+  if (!isAllowed(chatId)) return;
   const cfg = getChatConfig(chatId);
 
   const wallet = cfg.wallet;
@@ -166,6 +176,7 @@ bot.onText(/\/address/, (msg) => {
 
 bot.onText(/\/claim/, async (msg) => {
   const chatId = msg.chat.id;
+  if (!isAllowed(chatId)) return;
   await claimCreatorRewardsForChat(chatId, true);
 });
 
@@ -246,6 +257,7 @@ setInterval(() => {
 
 bot.onText(/\/payagent (\d+)/, async (msg, match) => {
   const chatId = msg.chat.id;
+  if (!isAllowed(chatId)) return;
   const cfg = getChatConfig(chatId);
   const wallet = cfg.wallet;
 
