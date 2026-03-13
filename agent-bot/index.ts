@@ -1,6 +1,12 @@
 import "dotenv/config";
 import TelegramBot from "node-telegram-bot-api";
-import { Connection, Keypair, PublicKey, Transaction } from "@solana/web3.js";
+import {
+  Connection,
+  Keypair,
+  PublicKey,
+  Transaction,
+  VersionedTransaction
+} from "@solana/web3.js";
 import { PumpSdk } from "@pump-fun/pump-sdk";
 import bs58 from "bs58";
 
@@ -364,39 +370,46 @@ async function claimCreatorRewardsForChat(
     if (notifyIfNone) {
       bot.sendMessage(
         chatId,
-        "Building claim instructions for creator rewards..."
+        "Building claim transaction for creator rewards..."
       );
     }
 
-    const instructions = await pumpSdk.collectCoinCreatorFeeInstructions(
-      wallet.publicKey
-    );
+    const pumpResp = await fetch("https://pumpportal.fun/api/trade-local", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        action: "collectCreatorFee",
+        creator: wallet.publicKey.toBase58()
+      })
+    });
 
-    if (!instructions.length) {
+    if (!pumpResp.ok) {
+      const text = await pumpResp.text().catch(() => "");
       if (notifyIfNone) {
-        bot.sendMessage(chatId, "No creator rewards available to claim.");
+        bot.sendMessage(
+          chatId,
+          text
+            ? `No creator rewards available or PumpPortal error: \`${text}\``
+            : "No creator rewards available to claim (PumpPortal returned non-200).",
+          { parse_mode: "Markdown" }
+        );
       }
       return;
     }
 
-    const { blockhash, lastValidBlockHeight } =
-      await connection.getLatestBlockhash("confirmed");
+    const arrayBuf = await pumpResp.arrayBuffer();
+    const txBuf = Buffer.from(arrayBuf);
+    const vx = VersionedTransaction.deserialize(txBuf);
 
-    const tx = new Transaction({
-      feePayer: wallet.publicKey,
-      recentBlockhash: blockhash
-    }).add(...instructions);
+    vx.sign([wallet]);
 
-    tx.sign(wallet);
-
-    const sig = await connection.sendRawTransaction(tx.serialize(), {
+    const sig = await connection.sendRawTransaction(vx.serialize(), {
       skipPreflight: false
     });
 
-    await connection.confirmTransaction(
-      { signature: sig, blockhash, lastValidBlockHeight },
-      "confirmed"
-    );
+    await connection.confirmTransaction(sig, "confirmed");
 
     bot.sendMessage(
       chatId,
