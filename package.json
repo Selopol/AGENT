@@ -6,15 +6,19 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "agent-bot": "node dist/agent-bot/index.js"
   },
   "dependencies": {
     "@pump-fun/agent-payments-sdk": "3.0.0",
+    "@pump-fun/pump-sdk": "1.31.0",
+    "@solana/web3.js": "^1.98.0",
     "@solana/wallet-adapter-react": "^0.15.33",
     "@solana/wallet-adapter-react-ui": "^0.9.36",
     "@solana/wallet-adapter-wallets": "^0.19.24",
-    "@solana/web3.js": "^1.98.0",
+    "dotenv": "^16.4.5",
     "next": "14.1.0",
+    "node-telegram-bot-api": "^0.66.0",
     "react": "18.2.0",
     "react-dom": "18.2.0"
   },
@@ -22,8 +26,10 @@
     "@types/node": "^20.11.0",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
+    "@types/node-telegram-bot-api": "^0.64.7",
     "eslint": "^8.57.0",
     "eslint-config-next": "14.1.0",
+    "ts-node": "^10.9.2",
     "typescript": "^5.3.0"
   }
 }
