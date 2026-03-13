@@ -9,26 +9,40 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const RPC_URL =
   process.env.SOLANA_RPC_URL ||
   "https://mainnet.helius-rpc.com/?api-key=ba94ceff-57d2-4471-81b6-c5815242a33c";
-const AGENT_MINT = process.env.AGENT_TOKEN_MINT_ADDRESS;
+const DEFAULT_AGENT_MINT = process.env.AGENT_TOKEN_MINT_ADDRESS;
 const CURRENCY_MINT = process.env.CURRENCY_MINT;
 
 if (!BOT_TOKEN) {
   throw new Error("TELEGRAM_BOT_TOKEN is not set");
 }
 
-if (!AGENT_MINT || !CURRENCY_MINT) {
-  throw new Error(
-    "AGENT_TOKEN_MINT_ADDRESS and CURRENCY_MINT must be set for the agent bot"
-  );
+if (!CURRENCY_MINT) {
+  throw new Error("CURRENCY_MINT must be set for the agent bot");
 }
 
 const connection = new Connection(RPC_URL, "confirmed");
 const pumpSdk = new PumpSdk();
-const agentMintPk = new PublicKey(AGENT_MINT);
+const defaultAgentMintPk = DEFAULT_AGENT_MINT
+  ? new PublicKey(DEFAULT_AGENT_MINT)
+  : null;
 const currencyMintPk = new PublicKey(CURRENCY_MINT);
 
-// In-memory private key per chat. Do NOT log or persist.
-const agentWallets = new Map<number, Keypair>();
+type ChatConfig = {
+  wallet?: Keypair;
+  agentMint?: PublicKey;
+};
+
+// In-memory config per chat. Do NOT log or persist private keys.
+const chatConfigs = new Map<number, ChatConfig>();
+
+function getChatConfig(chatId: number): ChatConfig {
+  let cfg = chatConfigs.get(chatId);
+  if (!cfg) {
+    cfg = {};
+    chatConfigs.set(chatId, cfg);
+  }
+  return cfg;
+}
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
@@ -36,13 +50,16 @@ bot.onText(/\/start/, (msg) => {
   bot.sendMessage(
     msg.chat.id,
     [
-      "🤖 Agent wallet bot.",
+      "🤖 Pump Agent Wallet Bot",
       "",
-      "Команды:",
-      "/setkey <secret> — задать приватный ключ кошелька агента (base58 или JSON массива).",
-      "/address — показать публичный адрес кошелька агента.",
-      "/claim — забрать creator rewards с Pump на кошелёк агента.",
-      "/payagent <lamports> — отправить оплату в Tokenized Agent контракт от имени кошелька агента."
+      "Configure this bot for any Pump agent token.",
+      "",
+      "Commands:",
+      "/setkey <secret> – set agent wallet private key (base58 or JSON array).",
+      "/setca <mint> – set the agent token CA (mint address).",
+      "/address – show current agent wallet and CA.",
+      "/claim – claim creator rewards from Pump into the agent wallet.",
+      "/payagent <lamports> – send an AgentAcceptPayment from the agent wallet."
     ].join("\n")
   );
 });
@@ -70,67 +87,114 @@ bot.onText(/\/setkey (.+)/, (msg, match) => {
   const chatId = msg.chat.id;
   const raw = match?.[1];
   if (!raw) {
-    bot.sendMessage(chatId, "Передай приватный ключ после команды.");
+    bot.sendMessage(chatId, "Please provide a private key after the command.");
     return;
   }
 
   const secret = parseSecretKey(raw);
   if (!secret) {
-    bot.sendMessage(chatId, "Не удалось распарсить приватный ключ.");
+    bot.sendMessage(chatId, "Failed to parse private key.");
     return;
   }
 
   try {
     const kp = Keypair.fromSecretKey(secret);
-    agentWallets.set(chatId, kp);
+    const cfg = getChatConfig(chatId);
+    cfg.wallet = kp;
     bot.sendMessage(
       chatId,
-      `Кошелёк агента задан.\nПубличный адрес: \`${kp.publicKey.toBase58()}\``,
+      `Agent wallet set.\nPublic address: \`${kp.publicKey.toBase58()}\``,
       { parse_mode: "Markdown" }
     );
   } catch {
-    bot.sendMessage(chatId, "Неверный приватный ключ.");
+    bot.sendMessage(chatId, "Invalid private key.");
+  }
+});
+
+bot.onText(/\/setca (.+)/, (msg, match) => {
+  const chatId = msg.chat.id;
+  const raw = match?.[1];
+  if (!raw) {
+    bot.sendMessage(chatId, "Please provide a mint address after the command.");
+    return;
+  }
+
+  try {
+    const mint = new PublicKey(raw.trim());
+    const cfg = getChatConfig(chatId);
+    cfg.agentMint = mint;
+    bot.sendMessage(
+      chatId,
+      `Agent token CA (mint) set:\n\`${mint.toBase58()}\``,
+      { parse_mode: "Markdown" }
+    );
+  } catch {
+    bot.sendMessage(chatId, "Invalid mint address. Please send a valid Solana mint.");
   }
 });
 
 bot.onText(/\/address/, (msg) => {
   const chatId = msg.chat.id;
-  const kp = agentWallets.get(chatId);
-  if (!kp) {
-    bot.sendMessage(chatId, "Сначала задай ключ через /setkey <secret>.");
+  const cfg = getChatConfig(chatId);
+
+  const wallet = cfg.wallet;
+  const mint = cfg.agentMint ?? defaultAgentMintPk;
+
+  if (!wallet && !mint) {
+    bot.sendMessage(
+      chatId,
+      "No configuration yet. Use /setkey <secret> and /setca <mint>."
+    );
     return;
   }
-  bot.sendMessage(chatId, `Адрес кошелька агента: \`${kp.publicKey.toBase58()}\``, {
-    parse_mode: "Markdown"
-  });
+
+  const lines: string[] = [];
+  if (wallet) {
+    lines.push(`Agent wallet: \`${wallet.publicKey.toBase58()}\``);
+  } else {
+    lines.push("Agent wallet: not set (use /setkey).");
+  }
+
+  if (mint) {
+    lines.push(`Agent token CA (mint): \`${mint.toBase58()}\``);
+  } else {
+    lines.push("Agent token CA (mint): not set (use /setca).");
+  }
+
+  bot.sendMessage(chatId, lines.join("\n"), { parse_mode: "Markdown" });
 });
 
 bot.onText(/\/claim/, async (msg) => {
   const chatId = msg.chat.id;
-  const kp = agentWallets.get(chatId);
-  if (!kp) {
-    bot.sendMessage(chatId, "Сначала задай ключ через /setkey <secret>.");
+  const cfg = getChatConfig(chatId);
+  const wallet = cfg.wallet;
+
+  if (!wallet) {
+    bot.sendMessage(chatId, "Set agent wallet first with /setkey <secret>.");
     return;
   }
 
   try {
-    bot.sendMessage(chatId, "Собираю инструкции для claim creator rewards...");
+    bot.sendMessage(chatId, "Building claim instructions for creator rewards...");
 
     const instructions = await pumpSdk.collectCoinCreatorFeeInstructions(
-      kp.publicKey
+      wallet.publicKey
     );
 
     if (!instructions.length) {
-      bot.sendMessage(chatId, "Нет доступных creator rewards для claim.");
+      bot.sendMessage(chatId, "No creator rewards available to claim.");
       return;
     }
 
     const { blockhash } = await connection.getLatestBlockhash("confirmed");
-    const tx = new Transaction({ feePayer: kp.publicKey, recentBlockhash: blockhash }).add(
+    const tx = new Transaction({
+      feePayer: wallet.publicKey,
+      recentBlockhash: blockhash
+    }).add(
       ...instructions
     );
 
-    tx.sign(kp);
+    tx.sign(wallet);
     const sig = await connection.sendRawTransaction(tx.serialize(), {
       skipPreflight: false
     });
@@ -139,41 +203,52 @@ bot.onText(/\/claim/, async (msg) => {
 
     bot.sendMessage(
       chatId,
-      `Claim creator rewards отправлен.\nTx: \`${sig}\``,
+      `Creator rewards claim sent.\nTx: \`${sig}\``,
       { parse_mode: "Markdown" }
     );
   } catch (err) {
     bot.sendMessage(
       chatId,
-      `Ошибка при claim creator rewards: ${(err as Error).message}`
+      `Error while claiming creator rewards: ${(err as Error).message}`
     );
   }
 });
 
 bot.onText(/\/payagent (\d+)/, async (msg, match) => {
   const chatId = msg.chat.id;
-  const kp = agentWallets.get(chatId);
-  if (!kp) {
-    bot.sendMessage(chatId, "Сначала задай ключ через /setkey <secret>.");
+  const cfg = getChatConfig(chatId);
+  const wallet = cfg.wallet;
+
+  if (!wallet) {
+    bot.sendMessage(chatId, "Set agent wallet first with /setkey <secret>.");
+    return;
+  }
+
+  const mint = cfg.agentMint ?? defaultAgentMintPk;
+  if (!mint) {
+    bot.sendMessage(
+      chatId,
+      "Set agent token CA (mint) first with /setca <mint>."
+    );
     return;
   }
 
   const lamportsRaw = match?.[1];
   if (!lamportsRaw) {
-    bot.sendMessage(chatId, "Укажи сумму в лампортах: /payagent <lamports>");
+    bot.sendMessage(chatId, "Specify amount in lamports: /payagent <lamports>");
     return;
   }
 
   const lamports = BigInt(lamportsRaw);
   if (lamports <= 0n) {
-    bot.sendMessage(chatId, "Сумма должна быть больше нуля.");
+    bot.sendMessage(chatId, "Amount must be greater than zero.");
     return;
   }
 
   try {
-    bot.sendMessage(chatId, "Строю AgentAcceptPayment транзакцию...");
+    bot.sendMessage(chatId, "Building AgentAcceptPayment transaction...");
 
-    const agent = new PumpAgent(agentMintPk, "mainnet", connection);
+    const agent = new PumpAgent(mint, "mainnet", connection);
 
     const now = Math.floor(Date.now() / 1000);
     const amount = lamports.toString();
@@ -182,7 +257,7 @@ bot.onText(/\/payagent (\d+)/, async (msg, match) => {
     const endTime = String(now + 60 * 60 * 24);
 
     const instructions = await agent.buildAcceptPaymentInstructions({
-      user: kp.publicKey,
+      user: wallet.publicKey,
       currencyMint: currencyMintPk,
       amount,
       memo,
@@ -194,11 +269,11 @@ bot.onText(/\/payagent (\d+)/, async (msg, match) => {
       await connection.getLatestBlockhash("confirmed");
 
     const tx = new Transaction({
-      feePayer: kp.publicKey,
+      feePayer: wallet.publicKey,
       recentBlockhash: blockhash
     }).add(...instructions);
 
-    tx.sign(kp);
+    tx.sign(wallet);
     const sig = await connection.sendRawTransaction(tx.serialize(), {
       skipPreflight: false
     });
@@ -210,13 +285,13 @@ bot.onText(/\/payagent (\d+)/, async (msg, match) => {
 
     bot.sendMessage(
       chatId,
-      `Оплата в Tokenized Agent отправлена.\nTx: \`${sig}\``,
+      `Payment to Tokenized Agent sent.\nTx: \`${sig}\``,
       { parse_mode: "Markdown" }
     );
   } catch (err) {
     bot.sendMessage(
       chatId,
-      `Ошибка при оплате через агентский контракт: ${(err as Error).message}`
+      `Error sending payment via agent contract: ${(err as Error).message}`
     );
   }
 });
