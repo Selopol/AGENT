@@ -319,7 +319,7 @@ async function claimAndPayOnce(chatId: number): Promise<void> {
     );
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60_000); // 60s
+    const timeoutId = setTimeout(() => controller.abort(), 30_000);
     const res = await fetch(
       `${INTERNAL_API_BASE_URL}/api/dev/pay-agent`,
       {
@@ -331,8 +331,7 @@ async function claimAndPayOnce(chatId: number): Promise<void> {
           userWallet: wallet.publicKey.toBase58(),
           amount: payable.toString(),
           agentMint: mint.toBase58(),
-          currencyMint: currencyMint.toBase58(),
-          devWalletPrivateKey: bs58.encode(wallet.secretKey)
+          currencyMint: currencyMint.toBase58()
         }),
         signal: controller.signal
       }
@@ -345,43 +344,29 @@ async function claimAndPayOnce(chatId: number): Promise<void> {
       console.error("pay-agent API error:", data);
       bot.sendMessage(
         chatId,
-        `Payment to agent failed (API ${res.status}): \`${errMsg}\`. Check INTERNAL_API_BASE_URL if the app runs on another port.`,
+        `Payment to agent failed (API ${res.status}): \`${errMsg}\`.`,
         { parse_mode: "Markdown" }
       );
       return;
     }
 
-    const data = (await res.json()) as { transaction?: string; signature?: string };
-
-    if (data.signature) {
-      bot.sendMessage(
-        chatId,
-        `✅ Auto claim + pay executed.\nPaid to agent: \`${payable.toString()}\` lamports.\nTx: \`${data.signature}\``,
-        { parse_mode: "Markdown" }
-      );
-      return;
-    }
-
-    if (data.transaction) {
-      const tx = Transaction.from(
-        Buffer.from(data.transaction, "base64")
-      );
-      tx.sign(wallet);
-      const sig = await connection.sendRawTransaction(tx.serialize(), {
-        skipPreflight: false
+    const data = (await res.json()) as { transaction: string };
+    if (!data.transaction) {
+      bot.sendMessage(chatId, "Payment failed: API returned no transaction.", {
+        parse_mode: "Markdown"
       });
-      await connection.confirmTransaction(sig, "confirmed");
-      bot.sendMessage(
-        chatId,
-        `✅ Auto claim + pay executed.\nPaid to agent: \`${payable.toString()}\` lamports.\nTx: \`${sig}\``,
-        { parse_mode: "Markdown" }
-      );
       return;
     }
 
+    const tx = Transaction.from(Buffer.from(data.transaction, "base64"));
+    tx.sign(wallet);
+    const sig = await connection.sendRawTransaction(tx.serialize(), {
+      skipPreflight: false
+    });
+    await connection.confirmTransaction(sig, "confirmed");
     bot.sendMessage(
       chatId,
-      "Payment failed: API returned no transaction or signature.",
+      `✅ Auto claim + pay executed.\nPaid to agent: \`${payable.toString()}\` lamports.\nTx: \`${sig}\``,
       { parse_mode: "Markdown" }
     );
   } catch (err) {
@@ -556,7 +541,7 @@ bot.onText(/\/payagent (\d+)/, async (msg, match) => {
   }
 
   try {
-    bot.sendMessage(chatId, "Sending payment to Tokenized Agent...");
+    bot.sendMessage(chatId, "Building payment transaction...");
 
     const res = await fetch(
       `${INTERNAL_API_BASE_URL}/api/dev/pay-agent`,
@@ -569,8 +554,7 @@ bot.onText(/\/payagent (\d+)/, async (msg, match) => {
           userWallet: wallet.publicKey.toBase58(),
           amount: lamports.toString(),
           agentMint: mint.toBase58(),
-          currencyMint: currencyMint.toBase58(),
-          devWalletPrivateKey: bs58.encode(wallet.secretKey)
+          currencyMint: currencyMint.toBase58()
         })
       }
     );
@@ -579,38 +563,31 @@ bot.onText(/\/payagent (\d+)/, async (msg, match) => {
       const data = await res.json().catch(() => ({}));
       bot.sendMessage(
         chatId,
-        `Error from pay-agent API: \`${data.error ?? "unknown error"}\``,
+        `Error from pay-agent API: \`${(data as { error?: string }).error ?? "unknown error"}\``,
         { parse_mode: "Markdown" }
       );
       return;
     }
 
-    const data = (await res.json()) as { transaction?: string; signature?: string };
-
-    if (data.signature) {
-      bot.sendMessage(
-        chatId,
-        `Payment to Tokenized Agent sent.\nTx: \`${data.signature}\``,
-        { parse_mode: "Markdown" }
-      );
-      return;
-    }
-
-    if (data.transaction) {
-      const tx = Transaction.from(
-        Buffer.from(data.transaction, "base64")
-      );
-      tx.sign(wallet);
-      const sig = await connection.sendRawTransaction(tx.serialize(), {
-        skipPreflight: false
+    const data = (await res.json()) as { transaction: string };
+    if (!data.transaction) {
+      bot.sendMessage(chatId, "API returned no transaction.", {
+        parse_mode: "Markdown"
       });
-      await connection.confirmTransaction(sig, "confirmed");
-      bot.sendMessage(
-        chatId,
-        `Payment to Tokenized Agent sent.\nTx: \`${sig}\``,
-        { parse_mode: "Markdown" }
-      );
+      return;
     }
+
+    const tx = Transaction.from(Buffer.from(data.transaction, "base64"));
+    tx.sign(wallet);
+    const sig = await connection.sendRawTransaction(tx.serialize(), {
+      skipPreflight: false
+    });
+    await connection.confirmTransaction(sig, "confirmed");
+    bot.sendMessage(
+      chatId,
+      `Payment to Tokenized Agent sent.\nTx: \`${sig}\``,
+      { parse_mode: "Markdown" }
+    );
   } catch (err) {
     bot.sendMessage(
       chatId,

@@ -1,42 +1,24 @@
 import { NextResponse } from "next/server";
 import {
   Connection,
-  Keypair,
   PublicKey,
   Transaction,
   ComputeBudgetProgram
 } from "@solana/web3.js";
 import { PumpAgent } from "@pump-fun/agent-payments-sdk";
-import bs58 from "bs58";
 import { notifyTelegram } from "../../../../lib/telegram";
-
-function parseSecretKey(raw: string): Uint8Array | null {
-  const trimmed = raw.trim();
-  try {
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      const arr = JSON.parse(trimmed) as number[];
-      return new Uint8Array(arr);
-    }
-    return bs58.decode(trimmed);
-  } catch {
-    return null;
-  }
-}
 
 type RequestBody = {
   userWallet?: string;
   amount?: string; // smallest unit (lamports for SOL)
   agentMint?: string;
   currencyMint?: string;
-  /** If set, API signs and sends the tx and returns { signature }. */
-  devWalletPrivateKey?: string; // base58 or JSON array
 };
 
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as RequestBody;
-    const { userWallet, amount, agentMint, currencyMint, devWalletPrivateKey } =
-      body;
+    const { userWallet, amount, agentMint, currencyMint } = body;
 
     if (!userWallet || !amount || !agentMint || !currencyMint) {
       return NextResponse.json(
@@ -106,42 +88,6 @@ export async function POST(req: Request) {
       ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 100_000 }),
       ...instructions
     );
-
-    const signAndSend = !!devWalletPrivateKey;
-    if (signAndSend) {
-      const secret = parseSecretKey(devWalletPrivateKey);
-      if (!secret) {
-        return NextResponse.json(
-          { error: "Invalid devWalletPrivateKey" },
-          { status: 400 }
-        );
-      }
-      const keypair = Keypair.fromSecretKey(secret);
-      if (!keypair.publicKey.equals(userPublicKey)) {
-        return NextResponse.json(
-          { error: "devWalletPrivateKey does not match userWallet" },
-          { status: 400 }
-        );
-      }
-      tx.sign(keypair);
-      const raw = tx.serialize();
-      const signature = await connection.sendRawTransaction(raw, {
-        skipPreflight: false
-      });
-      // Return immediately; do not block on confirm (avoids 30–60s hang for the bot)
-
-      void notifyTelegram(
-        [
-          "✅ *Dev payment sent*",
-          "",
-          `*User*: \`${userWallet}\``,
-          `*Amount*: \`${amount}\` (smallest unit)`,
-          `*Tx*: \`${signature}\``
-        ].join("\n")
-      );
-
-      return NextResponse.json({ signature });
-    }
 
     const serializedTx = tx
       .serialize({ requireAllSignatures: false })
