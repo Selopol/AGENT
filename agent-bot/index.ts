@@ -4,10 +4,10 @@ import {
   Connection,
   Keypair,
   PublicKey,
-  Transaction,
+  TransactionMessage,
   VersionedTransaction
 } from "@solana/web3.js";
-import { PumpSdk } from "@pump-fun/pump-sdk";
+import { OnlinePumpSdk } from "@pump-fun/pump-sdk";
 import bs58 from "bs58";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -27,7 +27,7 @@ if (!BOT_TOKEN) {
 }
 
 const connection = new Connection(RPC_URL, "confirmed");
-const pumpSdk = new PumpSdk();
+const onlinePumpSdk = new OnlinePumpSdk(connection);
 const defaultAgentMintPk = DEFAULT_AGENT_MINT
   ? new PublicKey(DEFAULT_AGENT_MINT)
   : null;
@@ -392,41 +392,36 @@ async function claimCreatorRewardsForChat(
       );
     }
 
-    const pumpResp = await fetch("https://pumpportal.fun/api/trade-local", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        action: "collectCreatorFee",
-        publicKey: wallet.publicKey.toBase58(),
-        priorityFee: 0.001 // SOL, as expected by PumpPortal
-      })
-    });
+    const instructions = await onlinePumpSdk.collectCoinCreatorFeeInstructions(
+      wallet.publicKey,
+      wallet.publicKey
+    );
 
-    if (!pumpResp.ok) {
-      const text = await pumpResp.text().catch(() => "");
+    if (instructions.length === 0) {
       if (notifyIfNone) {
-        bot.sendMessage(
-          chatId,
-          `PumpPortal error ${pumpResp.status}: \`${text || "unknown"}\``,
-          { parse_mode: "Markdown" }
-        );
+        bot.sendMessage(chatId, "No creator fee instructions to send.");
       }
       return;
     }
 
-    const arrayBuf = await pumpResp.arrayBuffer();
-    const txBuf = Buffer.from(arrayBuf);
-    const vx = VersionedTransaction.deserialize(txBuf);
-
+    const { blockhash, lastValidBlockHeight } =
+      await connection.getLatestBlockhash("confirmed");
+    const msg = new TransactionMessage({
+      payerKey: wallet.publicKey,
+      recentBlockhash: blockhash,
+      instructions
+    }).compileToV0Message();
+    const vx = new VersionedTransaction(msg);
     vx.sign([wallet]);
 
     const sig = await connection.sendRawTransaction(vx.serialize(), {
       skipPreflight: false
     });
 
-    await connection.confirmTransaction(sig, "confirmed");
+    await connection.confirmTransaction(
+      { signature: sig, blockhash, lastValidBlockHeight },
+      "confirmed"
+    );
 
     // 4) Wait a bit for balance to update, then measure claimed amount.
     await new Promise((r) => setTimeout(r, 1000));
