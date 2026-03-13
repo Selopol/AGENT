@@ -35,8 +35,10 @@ const defaultAgentMintPk = DEFAULT_AGENT_MINT
   : null;
 const defaultCurrencyMintPk = new PublicKey(DEFAULT_CURRENCY_MINT);
 
+// Use PORT (Railway etc.) so bot and Next can run in one process
 const INTERNAL_API_BASE_URL =
-  process.env.INTERNAL_API_BASE_URL || "http://127.0.0.1:3000";
+  process.env.INTERNAL_API_BASE_URL ||
+  `http://127.0.0.1:${process.env.PORT || "3000"}`;
 
 // PDA helper for the Tokenized Agent payments account (program vault).
 const PUMP_AGENT_PAYMENTS_PROGRAM_ID = new PublicKey(
@@ -380,11 +382,11 @@ async function claimAndPayOnce(chatId: number): Promise<void> {
     );
   } catch (err) {
     console.error("claimAndPayOnce error:", err);
-    bot.sendMessage(
-      chatId,
-      `Auto pay error: ${(err as Error).message}`,
-      { parse_mode: "Markdown" }
-    );
+    const msg =
+      (err as Error).message?.toLowerCase().includes("fetch")
+        ? `Auto pay error: ${(err as Error).message}. Check INTERNAL_API_BASE_URL (now \`${INTERNAL_API_BASE_URL}\`).`
+        : `Auto pay error: ${(err as Error).message}`;
+    bot.sendMessage(chatId, msg, { parse_mode: "Markdown" });
   }
 }
 
