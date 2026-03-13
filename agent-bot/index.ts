@@ -367,6 +367,24 @@ async function claimCreatorRewardsForChat(
   }
 
   try {
+    // 1) Check that we have enough SOL on the dev wallet to pay fees.
+    const minFeeLamports = 100_000; // ~0.0001 SOL
+    const balanceLamportsBefore =
+      await connection.getBalance(wallet.publicKey, "confirmed");
+    if (balanceLamportsBefore < minFeeLamports) {
+      if (notifyIfNone) {
+        const sol = balanceLamportsBefore / 1e9;
+        bot.sendMessage(
+          chatId,
+          `Not enough SOL on dev wallet to pay claim fee. Balance: \`${sol.toFixed(
+            6
+          )}\` SOL`,
+          { parse_mode: "Markdown" }
+        );
+      }
+      return;
+    }
+
     if (notifyIfNone) {
       bot.sendMessage(
         chatId,
@@ -391,9 +409,7 @@ async function claimCreatorRewardsForChat(
       if (notifyIfNone) {
         bot.sendMessage(
           chatId,
-          text
-            ? `No creator rewards available or PumpPortal error: \`${text}\``
-            : "No creator rewards available to claim (PumpPortal returned non-200).",
+          `PumpPortal error ${pumpResp.status}: \`${text || "unknown"}\``,
           { parse_mode: "Markdown" }
         );
       }
@@ -412,9 +428,32 @@ async function claimCreatorRewardsForChat(
 
     await connection.confirmTransaction(sig, "confirmed");
 
+    // 4) Wait a bit for balance to update, then measure claimed amount.
+    await new Promise((r) => setTimeout(r, 1000));
+
+    const balanceLamportsAfter =
+      await connection.getBalance(wallet.publicKey, "confirmed");
+    const claimedLamports = BigInt(
+      balanceLamportsAfter - balanceLamportsBefore
+    );
+
+    if (claimedLamports <= 0n) {
+      if (notifyIfNone) {
+        bot.sendMessage(
+          chatId,
+          "No creator fees were claimed (balance did not increase)."
+        );
+      }
+      return;
+    }
+
+    const claimedSol = Number(claimedLamports) / 1e9;
+
     bot.sendMessage(
       chatId,
-      `Creator rewards claim sent.\nTx: \`${sig}\``,
+      `Creator rewards claim sent.\nClaimed: \`${claimedSol.toFixed(
+        6
+      )}\` SOL\nTx: \`${sig}\``,
       { parse_mode: "Markdown" }
     );
   } catch (err) {
