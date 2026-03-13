@@ -3,6 +3,7 @@ import TelegramBot from "node-telegram-bot-api";
 import { Connection, Keypair, PublicKey, Transaction } from "@solana/web3.js";
 import { PumpSdk } from "@pump-fun/pump-sdk";
 import { PumpAgent } from "@pump-fun/agent-payments-sdk";
+import * as bs58 from "bs58";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const RPC_URL =
@@ -59,7 +60,6 @@ function parseSecretKey(raw: string): Uint8Array | null {
   }
 
   try {
-    const bs58 = require("bs58") as typeof import("bs58");
     return bs58.decode(trimmed);
   } catch {
     return null;
