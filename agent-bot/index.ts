@@ -100,7 +100,7 @@ bot.onText(/\/start/, (msg) => {
 });
 
 function parseSecretKey(raw: string): Uint8Array | null {
-  const trimmed = raw.trim();
+  const trimmed = raw.trim().replace(/\s+/g, " ");
 
   try {
     if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
@@ -129,7 +129,11 @@ bot.onText(/\/setkey (.+)/, (msg, match) => {
 
   const secret = parseSecretKey(raw);
   if (!secret) {
-    bot.sendMessage(chatId, "Failed to parse private key.");
+    bot.sendMessage(
+      chatId,
+      "Failed to parse private key. Use base58 or JSON array [1,2,...]. No extra spaces/newlines in base58.",
+      { parse_mode: "Markdown" }
+    );
     return;
   }
 
@@ -139,11 +143,20 @@ bot.onText(/\/setkey (.+)/, (msg, match) => {
     cfg.wallet = kp;
     bot.sendMessage(
       chatId,
-      `Agent wallet set.\nPublic address: \`${kp.publicKey.toBase58()}\``,
+      [
+        "Agent wallet set.",
+        `Public address: \`${kp.publicKey.toBase58()}\``,
+        "",
+        "_Key is stored only in memory; restart clears it — use /setkey again after deploy._"
+      ].join("\n"),
       { parse_mode: "Markdown" }
     );
   } catch {
-    bot.sendMessage(chatId, "Invalid private key.");
+    bot.sendMessage(
+      chatId,
+      "Invalid private key (wrong length or format). Solana key = 64 bytes.",
+      { parse_mode: "Markdown" }
+    );
   }
 });
 
