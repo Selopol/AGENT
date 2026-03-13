@@ -2,7 +2,6 @@ import "dotenv/config";
 import TelegramBot from "node-telegram-bot-api";
 import { Connection, Keypair, PublicKey, Transaction } from "@solana/web3.js";
 import { PumpSdk } from "@pump-fun/pump-sdk";
-import { PumpAgent } from "@pump-fun/agent-payments-sdk";
 import bs58 from "bs58";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -29,6 +28,9 @@ const defaultAgentMintPk = DEFAULT_AGENT_MINT
   : null;
 const currencyMintPk = new PublicKey(CURRENCY_MINT);
 
+const INTERNAL_API_BASE_URL =
+  process.env.INTERNAL_API_BASE_URL || "http://127.0.0.1:8080";
+
 type ChatConfig = {
   wallet?: Keypair;
   agentMint?: PublicKey;
@@ -36,6 +38,8 @@ type ChatConfig = {
 
 // In-memory config per chat. Do NOT log or persist private keys.
 const chatConfigs = new Map<number, ChatConfig>();
+
+const claimLoops = new Map<number, NodeJS.Timeout | null>();
 
 function getChatConfig(chatId: number): ChatConfig {
   let cfg = chatConfigs.get(chatId);
@@ -177,8 +181,123 @@ bot.onText(/\/address/, (msg) => {
 bot.onText(/\/claim/, async (msg) => {
   const chatId = msg.chat.id;
   if (!isAllowed(chatId)) return;
-  await claimCreatorRewardsForChat(chatId, true);
+
+  if (claimLoops.get(chatId)) {
+    bot.sendMessage(chatId, "Auto claim + pay loop is already running.");
+    return;
+  }
+
+  const cfg = getChatConfig(chatId);
+  if (!cfg.wallet) {
+    bot.sendMessage(chatId, "Set agent wallet first with /setkey <secret>.");
+    return;
+  }
+
+  bot.sendMessage(
+    chatId,
+    "Starting auto claim + pay loop (every 60 seconds). Use /stop to halt."
+  );
+
+  const handle = setInterval(() => {
+    void claimAndPayOnce(chatId);
+  }, 60_000);
+
+  claimLoops.set(chatId, handle);
 });
+
+bot.onText(/\/stop/, (msg) => {
+  const chatId = msg.chat.id;
+  if (!isAllowed(chatId)) return;
+
+  const handle = claimLoops.get(chatId);
+  if (!handle) {
+    bot.sendMessage(chatId, "No running auto claim + pay loop.");
+    return;
+  }
+
+  clearInterval(handle);
+  claimLoops.set(chatId, null);
+  bot.sendMessage(chatId, "Stopped auto claim + pay loop.");
+});
+
+async function claimAndPayOnce(chatId: number): Promise<void> {
+  const cfg = getChatConfig(chatId);
+  const wallet = cfg.wallet;
+
+  if (!wallet) {
+    return;
+  }
+
+  const mint = cfg.agentMint ?? defaultAgentMintPk;
+  if (!mint) {
+    // Mint not configured, cannot pay agent.
+    return;
+  }
+
+  try {
+    const balanceBefore = await connection.getBalance(
+      wallet.publicKey,
+      "confirmed"
+    );
+
+    await claimCreatorRewardsForChat(chatId, false);
+
+    const balanceAfter = await connection.getBalance(
+      wallet.publicKey,
+      "confirmed"
+    );
+
+    const claimed = BigInt(balanceAfter - balanceBefore);
+    // Keep some lamports for transaction fees.
+    const feeReserve = 100_000n; // 0.0001 SOL
+    const payable = claimed > feeReserve ? claimed - feeReserve : 0n;
+
+    if (payable <= 0n) {
+      return;
+    }
+
+    const res = await fetch(
+      `${INTERNAL_API_BASE_URL}/api/dev/pay-agent`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          userWallet: wallet.publicKey.toBase58(),
+          amount: payable.toString()
+        })
+      }
+    );
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      console.error("pay-agent API error:", data);
+      return;
+    }
+
+    const data = (await res.json()) as { transaction: string };
+
+    const tx = Transaction.from(
+      Buffer.from(data.transaction, "base64")
+    );
+    tx.sign(wallet);
+
+    const sig = await connection.sendRawTransaction(tx.serialize(), {
+      skipPreflight: false
+    });
+
+    await connection.confirmTransaction(sig, "confirmed");
+
+    bot.sendMessage(
+      chatId,
+      `Auto claim + pay executed.\nClaimed & paid: \`${payable.toString()}\` lamports.\nTx: \`${sig}\``,
+      { parse_mode: "Markdown" }
+    );
+  } catch (err) {
+    console.error("claimAndPayOnce error:", err);
+  }
+}
 
 async function claimCreatorRewardsForChat(
   chatId: number,
@@ -246,15 +365,6 @@ async function claimCreatorRewardsForChat(
   }
 }
 
-// Auto-claim loop: every minute, try to claim rewards for all configured chats.
-setInterval(() => {
-  for (const [chatId, cfg] of chatConfigs.entries()) {
-    if (!cfg.wallet) continue;
-    // Fire-and-forget; no notifications when there is nothing to claim.
-    void claimCreatorRewardsForChat(chatId, false);
-  }
-}, 60_000);
-
 bot.onText(/\/payagent (\d+)/, async (msg, match) => {
   const chatId = msg.chat.id;
   if (!isAllowed(chatId)) return;
@@ -290,40 +400,41 @@ bot.onText(/\/payagent (\d+)/, async (msg, match) => {
   try {
     bot.sendMessage(chatId, "Building AgentAcceptPayment transaction...");
 
-    const agent = new PumpAgent(mint, "mainnet", connection);
+    const res = await fetch(
+      `${INTERNAL_API_BASE_URL}/api/dev/pay-agent`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          userWallet: wallet.publicKey.toBase58(),
+          amount: lamports.toString()
+        })
+      }
+    );
 
-    const now = Math.floor(Date.now() / 1000);
-    const amount = lamports.toString();
-    const memo = String(Math.floor(Math.random() * 900000000000) + 100000);
-    const startTime = String(now);
-    const endTime = String(now + 60 * 60 * 24);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      bot.sendMessage(
+        chatId,
+        `Error from pay-agent API: \`${data.error ?? "unknown error"}\``,
+        { parse_mode: "Markdown" }
+      );
+      return;
+    }
 
-    const instructions = await agent.buildAcceptPaymentInstructions({
-      user: wallet.publicKey,
-      currencyMint: currencyMintPk,
-      amount,
-      memo,
-      startTime,
-      endTime
-    });
+    const data = (await res.json()) as { transaction: string };
 
-    const { blockhash, lastValidBlockHeight } =
-      await connection.getLatestBlockhash("confirmed");
-
-    const tx = new Transaction({
-      feePayer: wallet.publicKey,
-      recentBlockhash: blockhash
-    }).add(...instructions);
-
+    const tx = Transaction.from(
+      Buffer.from(data.transaction, "base64")
+    );
     tx.sign(wallet);
     const sig = await connection.sendRawTransaction(tx.serialize(), {
       skipPreflight: false
     });
 
-    await connection.confirmTransaction(
-      { signature: sig, blockhash, lastValidBlockHeight },
-      "confirmed"
-    );
+    await connection.confirmTransaction(sig, "confirmed");
 
     bot.sendMessage(
       chatId,
