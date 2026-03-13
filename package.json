@@ -5,9 +5,9 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "concurrently \"next start\" \"node -r ts-node/register agent-bot/index.ts\"",
+    "start": "concurrently \"next start\" \"node -r ts-node/register/transpile-only agent-bot/index.ts\"",
     "lint": "next lint",
-    "agent-bot": "node -r ts-node/register agent-bot/index.ts",
+    "agent-bot": "node -r ts-node/register/transpile-only agent-bot/index.ts",
     "start:web": "next start"
   },
   "dependencies": {
