@@ -246,6 +246,20 @@ bot.onText(/\/stop/, (msg) => {
   bot.sendMessage(chatId, "Stopped auto claim + pay loop.");
 });
 
+// One-shot manual claim test: only claims creator rewards once, without paying agent.
+bot.onText(/\/claimtest/, async (msg) => {
+  const chatId = msg.chat.id;
+  if (!isAllowed(chatId)) return;
+
+  const cfg = getChatConfig(chatId);
+  if (!cfg.wallet) {
+    bot.sendMessage(chatId, "Set dev wallet first with /setkey <secret>.");
+    return;
+  }
+
+  await claimCreatorRewardsForChat(chatId, true);
+});
+
 async function claimAndPayOnce(chatId: number): Promise<void> {
   const cfg = getChatConfig(chatId);
   const wallet = cfg.wallet;
