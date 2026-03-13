@@ -128,7 +128,7 @@ export async function POST(req: Request) {
       const signature = await connection.sendRawTransaction(raw, {
         skipPreflight: false
       });
-      await connection.confirmTransaction(signature, "confirmed");
+      // Return immediately; do not block on confirm (avoids 30–60s hang for the bot)
 
       void notifyTelegram(
         [

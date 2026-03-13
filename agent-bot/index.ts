@@ -318,6 +318,8 @@ async function claimAndPayOnce(chatId: number): Promise<void> {
       { parse_mode: "Markdown" }
     );
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60_000); // 60s
     const res = await fetch(
       `${INTERNAL_API_BASE_URL}/api/dev/pay-agent`,
       {
@@ -331,9 +333,11 @@ async function claimAndPayOnce(chatId: number): Promise<void> {
           agentMint: mint.toBase58(),
           currencyMint: currencyMint.toBase58(),
           devWalletPrivateKey: bs58.encode(wallet.secretKey)
-        })
+        }),
+        signal: controller.signal
       }
     );
+    clearTimeout(timeoutId);
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
@@ -382,10 +386,13 @@ async function claimAndPayOnce(chatId: number): Promise<void> {
     );
   } catch (err) {
     console.error("claimAndPayOnce error:", err);
+    const e = err as Error & { name?: string };
     const msg =
-      (err as Error).message?.toLowerCase().includes("fetch")
-        ? `Auto pay error: ${(err as Error).message}. Check INTERNAL_API_BASE_URL (now \`${INTERNAL_API_BASE_URL}\`).`
-        : `Auto pay error: ${(err as Error).message}`;
+      e.name === "AbortError"
+        ? "Payment request timed out (60s). API may be slow or unreachable."
+        : e.message?.toLowerCase().includes("fetch")
+          ? `Auto pay error: ${e.message}. Check INTERNAL_API_BASE_URL (now \`${INTERNAL_API_BASE_URL}\`).`
+          : `Auto pay error: ${e.message}`;
     bot.sendMessage(chatId, msg, { parse_mode: "Markdown" });
   }
 }
