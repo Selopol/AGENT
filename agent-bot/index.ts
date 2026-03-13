@@ -5,6 +5,7 @@ import {
   Connection,
   Keypair,
   PublicKey,
+  Transaction,
   TransactionMessage,
   VersionedTransaction
 } from "@solana/web3.js";
@@ -320,7 +321,8 @@ async function claimAndPayOnce(chatId: number): Promise<void> {
           userWallet: wallet.publicKey.toBase58(),
           amount: payable.toString(),
           agentMint: mint.toBase58(),
-          currencyMint: currencyMint.toBase58()
+          currencyMint: currencyMint.toBase58(),
+          devWalletPrivateKey: bs58.encode(wallet.secretKey)
         })
       }
     );
@@ -331,24 +333,32 @@ async function claimAndPayOnce(chatId: number): Promise<void> {
       return;
     }
 
-    const data = (await res.json()) as { transaction: string };
+    const data = (await res.json()) as { transaction?: string; signature?: string };
 
-    const tx = Transaction.from(
-      Buffer.from(data.transaction, "base64")
-    );
-    tx.sign(wallet);
+    if (data.signature) {
+      bot.sendMessage(
+        chatId,
+        `Auto claim + pay executed.\nClaimed & paid: \`${payable.toString()}\` lamports.\nTx: \`${data.signature}\``,
+        { parse_mode: "Markdown" }
+      );
+      return;
+    }
 
-    const sig = await connection.sendRawTransaction(tx.serialize(), {
-      skipPreflight: false
-    });
-
-    await connection.confirmTransaction(sig, "confirmed");
-
-    bot.sendMessage(
-      chatId,
-      `Auto claim + pay executed.\nClaimed & paid: \`${payable.toString()}\` lamports.\nTx: \`${sig}\``,
-      { parse_mode: "Markdown" }
-    );
+    if (data.transaction) {
+      const tx = Transaction.from(
+        Buffer.from(data.transaction, "base64")
+      );
+      tx.sign(wallet);
+      const sig = await connection.sendRawTransaction(tx.serialize(), {
+        skipPreflight: false
+      });
+      await connection.confirmTransaction(sig, "confirmed");
+      bot.sendMessage(
+        chatId,
+        `Auto claim + pay executed.\nClaimed & paid: \`${payable.toString()}\` lamports.\nTx: \`${sig}\``,
+        { parse_mode: "Markdown" }
+      );
+    }
   } catch (err) {
     console.error("claimAndPayOnce error:", err);
   }
@@ -513,7 +523,7 @@ bot.onText(/\/payagent (\d+)/, async (msg, match) => {
   }
 
   try {
-    bot.sendMessage(chatId, "Building AgentAcceptPayment transaction...");
+    bot.sendMessage(chatId, "Sending payment to Tokenized Agent...");
 
     const res = await fetch(
       `${INTERNAL_API_BASE_URL}/api/dev/pay-agent`,
@@ -526,7 +536,8 @@ bot.onText(/\/payagent (\d+)/, async (msg, match) => {
           userWallet: wallet.publicKey.toBase58(),
           amount: lamports.toString(),
           agentMint: mint.toBase58(),
-          currencyMint: currencyMint.toBase58()
+          currencyMint: currencyMint.toBase58(),
+          devWalletPrivateKey: bs58.encode(wallet.secretKey)
         })
       }
     );
@@ -541,23 +552,32 @@ bot.onText(/\/payagent (\d+)/, async (msg, match) => {
       return;
     }
 
-    const data = (await res.json()) as { transaction: string };
+    const data = (await res.json()) as { transaction?: string; signature?: string };
 
-    const tx = Transaction.from(
-      Buffer.from(data.transaction, "base64")
-    );
-    tx.sign(wallet);
-    const sig = await connection.sendRawTransaction(tx.serialize(), {
-      skipPreflight: false
-    });
+    if (data.signature) {
+      bot.sendMessage(
+        chatId,
+        `Payment to Tokenized Agent sent.\nTx: \`${data.signature}\``,
+        { parse_mode: "Markdown" }
+      );
+      return;
+    }
 
-    await connection.confirmTransaction(sig, "confirmed");
-
-    bot.sendMessage(
-      chatId,
-      `Payment to Tokenized Agent sent.\nTx: \`${sig}\``,
-      { parse_mode: "Markdown" }
-    );
+    if (data.transaction) {
+      const tx = Transaction.from(
+        Buffer.from(data.transaction, "base64")
+      );
+      tx.sign(wallet);
+      const sig = await connection.sendRawTransaction(tx.serialize(), {
+        skipPreflight: false
+      });
+      await connection.confirmTransaction(sig, "confirmed");
+      bot.sendMessage(
+        chatId,
+        `Payment to Tokenized Agent sent.\nTx: \`${sig}\``,
+        { parse_mode: "Markdown" }
+      );
+    }
   } catch (err) {
     bot.sendMessage(
       chatId,
