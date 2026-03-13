@@ -36,7 +36,7 @@ const defaultAgentMintPk = DEFAULT_AGENT_MINT
 const defaultCurrencyMintPk = new PublicKey(DEFAULT_CURRENCY_MINT);
 
 const INTERNAL_API_BASE_URL =
-  process.env.INTERNAL_API_BASE_URL || "http://127.0.0.1:8080";
+  process.env.INTERNAL_API_BASE_URL || "http://127.0.0.1:3000";
 
 // PDA helper for the Tokenized Agent payments account (program vault).
 const PUMP_AGENT_PAYMENTS_PROGRAM_ID = new PublicKey(
@@ -310,6 +310,12 @@ async function claimAndPayOnce(chatId: number): Promise<void> {
       return;
     }
 
+    bot.sendMessage(
+      chatId,
+      `Sending \`${payable.toString()}\` lamports to agent...`,
+      { parse_mode: "Markdown" }
+    );
+
     const res = await fetch(
       `${INTERNAL_API_BASE_URL}/api/dev/pay-agent`,
       {
@@ -329,7 +335,13 @@ async function claimAndPayOnce(chatId: number): Promise<void> {
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
+      const errMsg = (data as { error?: string }).error ?? res.statusText ?? "unknown";
       console.error("pay-agent API error:", data);
+      bot.sendMessage(
+        chatId,
+        `Payment to agent failed (API ${res.status}): \`${errMsg}\`. Check INTERNAL_API_BASE_URL if the app runs on another port.`,
+        { parse_mode: "Markdown" }
+      );
       return;
     }
 
@@ -338,7 +350,7 @@ async function claimAndPayOnce(chatId: number): Promise<void> {
     if (data.signature) {
       bot.sendMessage(
         chatId,
-        `Auto claim + pay executed.\nClaimed & paid: \`${payable.toString()}\` lamports.\nTx: \`${data.signature}\``,
+        `✅ Auto claim + pay executed.\nPaid to agent: \`${payable.toString()}\` lamports.\nTx: \`${data.signature}\``,
         { parse_mode: "Markdown" }
       );
       return;
@@ -355,12 +367,24 @@ async function claimAndPayOnce(chatId: number): Promise<void> {
       await connection.confirmTransaction(sig, "confirmed");
       bot.sendMessage(
         chatId,
-        `Auto claim + pay executed.\nClaimed & paid: \`${payable.toString()}\` lamports.\nTx: \`${sig}\``,
+        `✅ Auto claim + pay executed.\nPaid to agent: \`${payable.toString()}\` lamports.\nTx: \`${sig}\``,
         { parse_mode: "Markdown" }
       );
+      return;
     }
+
+    bot.sendMessage(
+      chatId,
+      "Payment failed: API returned no transaction or signature.",
+      { parse_mode: "Markdown" }
+    );
   } catch (err) {
     console.error("claimAndPayOnce error:", err);
+    bot.sendMessage(
+      chatId,
+      `Auto pay error: ${(err as Error).message}`,
+      { parse_mode: "Markdown" }
+    );
   }
 }
 
