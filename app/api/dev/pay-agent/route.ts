@@ -11,16 +11,18 @@ import { notifyTelegram } from "../../../../lib/telegram";
 type RequestBody = {
   userWallet?: string;
   amount?: string; // smallest unit (lamports for SOL)
+  agentMint?: string;
+  currencyMint?: string;
 };
 
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as RequestBody;
-    const { userWallet, amount } = body;
+    const { userWallet, amount, agentMint, currencyMint } = body;
 
-    if (!userWallet || !amount) {
+    if (!userWallet || !amount || !agentMint || !currencyMint) {
       return NextResponse.json(
-        { error: "Missing userWallet or amount" },
+        { error: "Missing userWallet, amount, agentMint, or currencyMint" },
         { status: 400 }
       );
     }
@@ -47,21 +49,17 @@ export async function POST(req: Request) {
       process.env.SOLANA_RPC_URL || "https://rpc.solanatracker.io/public";
     const connection = new Connection(rpcUrl);
 
-    const agentMintEnv = process.env.AGENT_TOKEN_MINT_ADDRESS;
-    const currencyMintEnv = process.env.CURRENCY_MINT;
-
-    if (!agentMintEnv || !currencyMintEnv) {
+    let agentMintPk: PublicKey;
+    let currencyMintPk: PublicKey;
+    try {
+      agentMintPk = new PublicKey(agentMint);
+      currencyMintPk = new PublicKey(currencyMint);
+    } catch {
       return NextResponse.json(
-        {
-          error:
-            "AGENT_TOKEN_MINT_ADDRESS and CURRENCY_MINT must be configured on the server"
-        },
-        { status: 500 }
+        { error: "Invalid agentMint or currencyMint" },
+        { status: 400 }
       );
     }
-
-    const agentMint = new PublicKey(agentMintEnv);
-    const currencyMint = new PublicKey(currencyMintEnv);
 
     const now = Math.floor(Date.now() / 1000);
     const memo = String(
@@ -70,11 +68,11 @@ export async function POST(req: Request) {
     const startTime = String(now);
     const endTime = String(now + 60 * 60 * 24); // 24h window
 
-    const agent = new PumpAgent(agentMint, "mainnet", connection);
+    const agent = new PumpAgent(agentMintPk, "mainnet", connection);
 
     const instructions = await agent.buildAcceptPaymentInstructions({
       user: userPublicKey,
-      currencyMint,
+      currencyMint: currencyMintPk,
       amount,
       memo,
       startTime,

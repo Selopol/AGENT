@@ -11,14 +11,13 @@ const RPC_URL =
   process.env.SOLANA_RPC_URL ||
   "https://mainnet.helius-rpc.com/?api-key=ba94ceff-57d2-4471-81b6-c5815242a33c";
 const DEFAULT_AGENT_MINT = process.env.AGENT_TOKEN_MINT_ADDRESS;
-const CURRENCY_MINT = process.env.CURRENCY_MINT;
+// Default currency mint is wSOL; can be overridden per-chat via commands later.
+const DEFAULT_CURRENCY_MINT =
+  process.env.CURRENCY_MINT ||
+  "So11111111111111111111111111111111111111112";
 
 if (!BOT_TOKEN) {
   throw new Error("TELEGRAM_BOT_TOKEN is not set");
-}
-
-if (!CURRENCY_MINT) {
-  throw new Error("CURRENCY_MINT must be set for the agent bot");
 }
 
 const connection = new Connection(RPC_URL, "confirmed");
@@ -26,7 +25,7 @@ const pumpSdk = new PumpSdk();
 const defaultAgentMintPk = DEFAULT_AGENT_MINT
   ? new PublicKey(DEFAULT_AGENT_MINT)
   : null;
-const currencyMintPk = new PublicKey(CURRENCY_MINT);
+const defaultCurrencyMintPk = new PublicKey(DEFAULT_CURRENCY_MINT);
 
 const INTERNAL_API_BASE_URL =
   process.env.INTERNAL_API_BASE_URL || "http://127.0.0.1:8080";
@@ -48,6 +47,7 @@ function getTokenAgentPaymentsPDA(mint: PublicKey): PublicKey {
 type ChatConfig = {
   wallet?: Keypair;
   agentMint?: PublicKey;
+  currencyMint?: PublicKey;
 };
 
 // In-memory config per chat. Do NOT log or persist private keys.
@@ -80,9 +80,9 @@ bot.onText(/\/start/, (msg) => {
       "Configure this bot for any Pump agent token.",
       "",
       "Commands:",
-      "/setkey <secret> – set agent wallet private key (base58 or JSON array).",
+      "/setkey <secret> – set dev wallet private key (base58 or JSON array).",
       "/setca <mint> – set the agent token CA (mint address).",
-      "/address – show current agent wallet and CA.",
+      "/address – show current dev wallet, CA, and currency.",
       "/claim – claim creator rewards from Pump into the agent wallet.",
       "/payagent <lamports> – send an AgentAcceptPayment from the agent wallet."
     ].join("\n")
@@ -174,6 +174,7 @@ bot.onText(/\/address/, (msg) => {
 
   const wallet = cfg.wallet;
   const mint = cfg.agentMint ?? defaultAgentMintPk;
+  const currencyMint = cfg.currencyMint ?? defaultCurrencyMintPk;
 
   if (!wallet && !mint) {
     bot.sendMessage(
@@ -185,15 +186,19 @@ bot.onText(/\/address/, (msg) => {
 
   const lines: string[] = [];
   if (wallet) {
-    lines.push(`Agent wallet: \`${wallet.publicKey.toBase58()}\``);
+    lines.push(`Dev wallet: \`${wallet.publicKey.toBase58()}\``);
   } else {
-    lines.push("Agent wallet: not set (use /setkey).");
+    lines.push("Dev wallet: not set (use /setkey).");
   }
 
   if (mint) {
     lines.push(`Agent token CA (mint): \`${mint.toBase58()}\``);
   } else {
     lines.push("Agent token CA (mint): not set (use /setca).");
+  }
+
+  if (currencyMint) {
+    lines.push(`Payment currency mint: \`${currencyMint.toBase58()}\``);
   }
 
   bot.sendMessage(chatId, lines.join("\n"), { parse_mode: "Markdown" });
@@ -255,6 +260,12 @@ async function claimAndPayOnce(chatId: number): Promise<void> {
     return;
   }
 
+  const currencyMint = cfg.currencyMint ?? defaultCurrencyMintPk;
+  if (!currencyMint) {
+    // Should not happen, we always have a default.
+    return;
+  }
+
   try {
     const balanceBefore = await connection.getBalance(
       wallet.publicKey,
@@ -286,7 +297,9 @@ async function claimAndPayOnce(chatId: number): Promise<void> {
         },
         body: JSON.stringify({
           userWallet: wallet.publicKey.toBase58(),
-          amount: payable.toString()
+          amount: payable.toString(),
+          agentMint: mint.toBase58(),
+          currencyMint: currencyMint.toBase58()
         })
       }
     );
@@ -406,6 +419,8 @@ bot.onText(/\/payagent (\d+)/, async (msg, match) => {
     return;
   }
 
+  const currencyMint = cfg.currencyMint ?? defaultCurrencyMintPk;
+
   const lamportsRaw = match?.[1];
   if (!lamportsRaw) {
     bot.sendMessage(chatId, "Specify amount in lamports: /payagent <lamports>");
@@ -430,7 +445,9 @@ bot.onText(/\/payagent (\d+)/, async (msg, match) => {
         },
         body: JSON.stringify({
           userWallet: wallet.publicKey.toBase58(),
-          amount: lamports.toString()
+          amount: lamports.toString(),
+          agentMint: mint.toBase58(),
+          currencyMint: currencyMint.toBase58()
         })
       }
     );
