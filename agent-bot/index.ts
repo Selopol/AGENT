@@ -6,6 +6,7 @@ import {
   Keypair,
   PublicKey,
   Transaction,
+  TransactionInstruction,
   TransactionMessage,
   VersionedTransaction
 } from "@solana/web3.js";
@@ -445,8 +446,26 @@ async function claimCreatorRewardsForChat(
       );
     }
 
-    const { instructions } =
-      await onlinePumpSdk.buildDistributeCreatorFeesInstructions(mint);
+    let instructions: TransactionInstruction[];
+    try {
+      const result =
+        await onlinePumpSdk.buildDistributeCreatorFeesInstructions(mint);
+      instructions = result.instructions;
+    } catch (distributeErr) {
+      const msg = (distributeErr as Error).message ?? "";
+      if (
+        msg.includes("Sharing config not found") ||
+        msg.toLowerCase().includes("sharing config")
+      ) {
+        instructions =
+          await onlinePumpSdk.collectCoinCreatorFeeInstructions(
+            wallet.publicKey,
+            wallet.publicKey
+          );
+      } else {
+        throw distributeErr;
+      }
+    }
 
     if (instructions.length === 0) {
       if (notifyIfNone) {
