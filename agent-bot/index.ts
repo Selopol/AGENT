@@ -400,7 +400,7 @@ async function claimCreatorRewardsForChat(
       body: JSON.stringify({
         action: "collectCreatorFee",
         publicKey: wallet.publicKey.toBase58(),
-        priorityFee: 100_000 // in micro-lamports, per PumpPortal docs
+        priorityFee: 0.001 // SOL, as expected by PumpPortal
       })
     });
 
