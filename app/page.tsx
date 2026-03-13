@@ -16,10 +16,9 @@ export default function HomePage() {
 
   const [invoice, setInvoice] = useState<InvoiceWithWallet | null>(null);
   const [txSignature, setTxSignature] = useState<string | null>(null);
-  const [prompt, setPrompt] = useState<string>("");
-  const [agentAnswer, setAgentAnswer] = useState<string | null>(null);
+  const [randomNumber, setRandomNumber] = useState<number | null>(null);
   const [loadingPayment, setLoadingPayment] = useState(false);
-  const [loadingAgent, setLoadingAgent] = useState(false);
+  const [loadingRandom, setLoadingRandom] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isWalletConnected = !!publicKey;
@@ -30,7 +29,7 @@ export default function HomePage() {
     if (!connection) return;
 
     setError(null);
-    setAgentAnswer(null);
+    setRandomNumber(null);
     setLoadingPayment(true);
 
     try {
@@ -70,42 +69,37 @@ export default function HomePage() {
     }
   };
 
-  const handleAskAgent = async () => {
+  const handleGenerateRandom = async () => {
     if (!invoice) {
       setError("You need to complete a payment first.");
       return;
     }
 
-    if (!prompt.trim()) {
-      setError("Enter a question for the agent.");
-      return;
-    }
-
     setError(null);
-    setLoadingAgent(true);
+    setLoadingRandom(true);
 
     try {
-      const res = await fetch("/api/agent", {
+      const res = await fetch("/api/random", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ ...invoice, prompt })
+        body: JSON.stringify(invoice)
       });
 
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error || "Failed to query agent");
+        throw new Error(data.error || "Failed to generate random number");
       }
 
-      setAgentAnswer(data.answer ?? "");
+      setRandomNumber(data.random);
     } catch (e: unknown) {
       const message =
-        e instanceof Error ? e.message : "Unexpected error querying agent";
+        e instanceof Error ? e.message : "Unexpected error generating random";
       setError(message);
     } finally {
-      setLoadingAgent(false);
+      setLoadingRandom(false);
     }
   };
 
@@ -181,55 +175,29 @@ export default function HomePage() {
 
       <section className="section">
         <div className="section-header">
-          <div className="section-title">Step 2 · Ask your agent</div>
-          <div className="badge">Grok</div>
+          <div className="section-title">Step 2 · Get random number</div>
+          <div className="badge">0 → 1000</div>
         </div>
         <div className="actions">
-          <textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Ask your Pump agent anything..."
-            style={{
-              width: "100%",
-              minHeight: "80px",
-              borderRadius: "0.75rem",
-              border: "1px solid rgba(55,65,81,0.9)",
-              background: "rgba(15,23,42,0.9)",
-              color: "#e5e7eb",
-              padding: "0.75rem",
-              fontSize: "0.9rem",
-              resize: "vertical"
-            }}
-          />
           <button
             className="secondary-button"
-            onClick={handleAskAgent}
-            disabled={!hasPaid || loadingAgent}
+            onClick={handleGenerateRandom}
+            disabled={!hasPaid || loadingRandom}
           >
-            {loadingAgent ? "Verifying & asking..." : "Ask paid agent"}
+            {loadingRandom ? "Verifying & rolling..." : "Generate random"}
           </button>
           <div className="pill-label">
             Backend:{" "}
             <span>
-              verifies your payment via PumpAgent, then forwards your question
-              to Grok
+              verifies your payment via PumpAgent before returning entropy
             </span>
           </div>
         </div>
 
-        {agentAnswer && (
+        {randomNumber !== null && (
           <div className="result">
-            <div className="result-label">Agent answer:</div>
-            <div
-              style={{
-                fontSize: "0.9rem",
-                lineHeight: 1.5,
-                color: "#e5e7eb",
-                whiteSpace: "pre-wrap"
-              }}
-            >
-              {agentAnswer}
-            </div>
+            <div className="result-label">Your random number:</div>
+            <div className="result-number">{randomNumber}</div>
           </div>
         )}
 
