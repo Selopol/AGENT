@@ -446,25 +446,19 @@ async function claimCreatorRewardsForChat(
       );
     }
 
+    // Two approaches: distribute_creator_fees (mint + sharing config) or collectCoinCreatorFee (wallet, bonding curve + AMM)
     let instructions: TransactionInstruction[];
     try {
       const result =
         await onlinePumpSdk.buildDistributeCreatorFeesInstructions(mint);
       instructions = result.instructions;
-    } catch (distributeErr) {
-      const msg = (distributeErr as Error).message ?? "";
-      if (
-        msg.includes("Sharing config not found") ||
-        msg.toLowerCase().includes("sharing config")
-      ) {
-        instructions =
-          await onlinePumpSdk.collectCoinCreatorFeeInstructions(
-            wallet.publicKey,
-            wallet.publicKey
-          );
-      } else {
-        throw distributeErr;
-      }
+    } catch {
+      // Fallback for tokens without sharing config or any distribute error (same as /claimtest)
+      instructions =
+        await onlinePumpSdk.collectCoinCreatorFeeInstructions(
+          wallet.publicKey,
+          wallet.publicKey
+        );
     }
 
     if (instructions.length === 0) {
@@ -529,12 +523,10 @@ async function claimCreatorRewardsForChat(
       { parse_mode: "Markdown" }
     );
   } catch (err) {
-    if (notifyIfNone) {
-      bot.sendMessage(
-        chatId,
-        `Error while claiming creator rewards: ${(err as Error).message}`
-      );
-    }
+    bot.sendMessage(
+      chatId,
+      `Error while claiming creator rewards: ${(err as Error).message}`
+    );
   }
 }
 
