@@ -31,6 +31,20 @@ const currencyMintPk = new PublicKey(CURRENCY_MINT);
 const INTERNAL_API_BASE_URL =
   process.env.INTERNAL_API_BASE_URL || "http://127.0.0.1:8080";
 
+// PDA helper for the Tokenized Agent payments account (program vault).
+const PUMP_AGENT_PAYMENTS_PROGRAM_ID = new PublicKey(
+  "AgenTMiC2hvxGebTsgmsD4HHBa8WEcqGFf87iwRRxLo7"
+);
+const TOKEN_AGENT_PAYMENTS_SEED = Buffer.from("token-agent-payments");
+
+function getTokenAgentPaymentsPDA(mint: PublicKey): PublicKey {
+  const [pda] = PublicKey.findProgramAddressSync(
+    [TOKEN_AGENT_PAYMENTS_SEED, mint.toBuffer()],
+    PUMP_AGENT_PAYMENTS_PROGRAM_ID
+  );
+  return pda;
+}
+
 type ChatConfig = {
   wallet?: Keypair;
   agentMint?: PublicKey;
@@ -136,9 +150,16 @@ bot.onText(/\/setca (.+)/, (msg, match) => {
     const mint = new PublicKey(raw.trim());
     const cfg = getChatConfig(chatId);
     cfg.agentMint = mint;
+    const paymentsPda = getTokenAgentPaymentsPDA(mint);
     bot.sendMessage(
       chatId,
-      `Agent token CA (mint) set:\n\`${mint.toBase58()}\``,
+      [
+        "Agent token CA set.",
+        "",
+        `Mint (CA): \`${mint.toBase58()}\``,
+        "Agent payments PDA (program vault):",
+        `\`${paymentsPda.toBase58()}\``
+      ].join("\n"),
       { parse_mode: "Markdown" }
     );
   } catch {
