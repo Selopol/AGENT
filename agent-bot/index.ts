@@ -166,40 +166,59 @@ bot.onText(/\/address/, (msg) => {
 
 bot.onText(/\/claim/, async (msg) => {
   const chatId = msg.chat.id;
+  await claimCreatorRewardsForChat(chatId, true);
+});
+
+async function claimCreatorRewardsForChat(
+  chatId: number,
+  notifyIfNone: boolean
+): Promise<void> {
   const cfg = getChatConfig(chatId);
   const wallet = cfg.wallet;
-
   if (!wallet) {
-    bot.sendMessage(chatId, "Set agent wallet first with /setkey <secret>.");
+    if (notifyIfNone) {
+      bot.sendMessage(chatId, "Set agent wallet first with /setkey <secret>.");
+    }
     return;
   }
 
   try {
-    bot.sendMessage(chatId, "Building claim instructions for creator rewards...");
+    if (notifyIfNone) {
+      bot.sendMessage(
+        chatId,
+        "Building claim instructions for creator rewards..."
+      );
+    }
 
     const instructions = await pumpSdk.collectCoinCreatorFeeInstructions(
       wallet.publicKey
     );
 
     if (!instructions.length) {
-      bot.sendMessage(chatId, "No creator rewards available to claim.");
+      if (notifyIfNone) {
+        bot.sendMessage(chatId, "No creator rewards available to claim.");
+      }
       return;
     }
 
-    const { blockhash } = await connection.getLatestBlockhash("confirmed");
+    const { blockhash, lastValidBlockHeight } =
+      await connection.getLatestBlockhash("confirmed");
+
     const tx = new Transaction({
       feePayer: wallet.publicKey,
       recentBlockhash: blockhash
-    }).add(
-      ...instructions
-    );
+    }).add(...instructions);
 
     tx.sign(wallet);
+
     const sig = await connection.sendRawTransaction(tx.serialize(), {
       skipPreflight: false
     });
 
-    await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight: (await connection.getLatestBlockhash()).lastValidBlockHeight }, "confirmed");
+    await connection.confirmTransaction(
+      { signature: sig, blockhash, lastValidBlockHeight },
+      "confirmed"
+    );
 
     bot.sendMessage(
       chatId,
@@ -207,12 +226,23 @@ bot.onText(/\/claim/, async (msg) => {
       { parse_mode: "Markdown" }
     );
   } catch (err) {
-    bot.sendMessage(
-      chatId,
-      `Error while claiming creator rewards: ${(err as Error).message}`
-    );
+    if (notifyIfNone) {
+      bot.sendMessage(
+        chatId,
+        `Error while claiming creator rewards: ${(err as Error).message}`
+      );
+    }
   }
-});
+}
+
+// Auto-claim loop: every minute, try to claim rewards for all configured chats.
+setInterval(() => {
+  for (const [chatId, cfg] of chatConfigs.entries()) {
+    if (!cfg.wallet) continue;
+    // Fire-and-forget; no notifications when there is nothing to claim.
+    void claimCreatorRewardsForChat(chatId, false);
+  }
+}, 60_000);
 
 bot.onText(/\/payagent (\d+)/, async (msg, match) => {
   const chatId = msg.chat.id;
