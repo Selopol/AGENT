@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { PumpAgent } from "@pump-fun/agent-payments-sdk";
 import { Connection, PublicKey } from "@solana/web3.js";
+import { notifyTelegram } from "../../../lib/telegram";
 
 type RequestBody = {
   userWallet?: string;
@@ -101,6 +102,17 @@ export async function POST(req: Request) {
         { status: 402 }
       );
     }
+
+    void notifyTelegram(
+      [
+        "✅ *Invoice paid*",
+        "",
+        `*User*: \`${userWallet}\``,
+        `*Amount*: \`${amount}\` (smallest unit)`,
+        `*Memo*: \`${memo}\``,
+        `*Window*: \`${startTime} – ${endTime}\``
+      ].join("\n")
+    );
 
     const apiKey = process.env.GROK_API_KEY;
     const baseUrl = process.env.GROK_API_BASE_URL || "https://api.x.ai/v1";

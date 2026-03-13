@@ -7,6 +7,7 @@ import {
 } from "@solana/web3.js";
 import { PumpAgent } from "@pump-fun/agent-payments-sdk";
 import { generateInvoiceParams } from "../../../lib/invoice";
+import { notifyTelegram } from "../../../lib/telegram";
 
 type RequestBody = {
   userWallet?: string;
@@ -88,15 +89,28 @@ export async function POST(req: Request) {
       .serialize({ requireAllSignatures: false })
       .toString("base64");
 
+    const invoice = {
+      userWallet,
+      amount,
+      memo,
+      startTime,
+      endTime
+    };
+
+    void notifyTelegram(
+      [
+        "🧾 *New invoice created*",
+        "",
+        `*User*: \`${userWallet}\``,
+        `*Amount*: \`${amount}\` (smallest unit)`,
+        `*Memo*: \`${memo}\``,
+        `*Window*: \`${startTime} – ${endTime}\``
+      ].join("\n")
+    );
+
     return NextResponse.json({
       transaction: serializedTx,
-      invoice: {
-        userWallet,
-        amount,
-        memo,
-        startTime,
-        endTime
-      }
+      invoice
     });
   } catch (error) {
     console.error("Error in /api/create-payment:", error);
