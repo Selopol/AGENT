@@ -1,6 +1,7 @@
 import "dotenv/config";
 import TelegramBot from "node-telegram-bot-api";
 import {
+  ComputeBudgetProgram,
   Connection,
   Keypair,
   PublicKey,
@@ -358,10 +359,21 @@ async function claimCreatorRewardsForChat(
   notifyIfNone: boolean
 ): Promise<void> {
   const cfg = getChatConfig(chatId);
+  const mint = cfg.agentMint ?? defaultAgentMintPk;
   const wallet = cfg.wallet;
   if (!wallet) {
     if (notifyIfNone) {
       bot.sendMessage(chatId, "Set agent wallet first with /setkey <secret>.");
+    }
+    return;
+  }
+
+  if (!mint) {
+    if (notifyIfNone) {
+      bot.sendMessage(
+        chatId,
+        "Set agent token CA (mint) first with /setca <mint> before claiming."
+      );
     }
     return;
   }
@@ -392,24 +404,29 @@ async function claimCreatorRewardsForChat(
       );
     }
 
-    const instructions = await onlinePumpSdk.collectCoinCreatorFeeInstructions(
-      wallet.publicKey,
-      wallet.publicKey
-    );
+    const { instructions } =
+      await onlinePumpSdk.buildDistributeCreatorFeesInstructions(mint);
 
     if (instructions.length === 0) {
       if (notifyIfNone) {
-        bot.sendMessage(chatId, "No creator fee instructions to send.");
+        bot.sendMessage(chatId, "No creator fees available to distribute.");
       }
       return;
     }
+
+    // Low priority fee (real claim ~0.000007 SOL total; avoid PumpPortal-style 0.001)
+    const priorityFeeIx = [
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 150_000 }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5_000 })
+    ];
+    const allInstructions = [...priorityFeeIx, ...instructions];
 
     const { blockhash, lastValidBlockHeight } =
       await connection.getLatestBlockhash("confirmed");
     const msg = new TransactionMessage({
       payerKey: wallet.publicKey,
       recentBlockhash: blockhash,
-      instructions
+      instructions: allInstructions
     }).compileToV0Message();
     const vx = new VersionedTransaction(msg);
     vx.sign([wallet]);
